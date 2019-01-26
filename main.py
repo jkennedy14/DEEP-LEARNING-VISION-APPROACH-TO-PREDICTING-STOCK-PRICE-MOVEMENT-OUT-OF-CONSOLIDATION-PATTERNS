@@ -10,15 +10,21 @@ import plotly.graph_objs as go
 
 plotly.tools.set_credentials_file(username='jkenn4', api_key='0GSQOuD2n73387IE6vDL')
 
+
+#Trade data read in; Trade data includes: Ticker, Buy date, Buy Price   
+#Tickers used in training/testing were scanned for using online technical and fundamental scanners
+#Buy dates / Buy Prices manually determined
+
 df = pd.read_csv('All trades.csv')
+
+
+#Drop non-unique tickers / Shorts
 
 df=df.drop(df.index[[236,291,287,281,282,289,272,279,286,290,7,105,120,131,133,137,145,159,160,162,178,185,194,200,207,272,292,10,15,21,37,40,192 ]])
 
 
 df2=df.loc[df['Buy/Sell'] == "BUY"]
 df2['TradeDate'] = pd.to_datetime(df['TradeDate'])
-
-#remove non unique values
 
 uniquelist=[]
 nonuniqueindex=[]
@@ -41,15 +47,20 @@ import datetime
 df3=df2.set_index("Symbol",inplace=False)
 
 fourWeekReturns=[]
-
-
 neutralIndices=[]
 posIndices=[]
 negIndices=[]
 lenarr=0
 
+#Following for loop uses each trade (composed of Ticker, Buy Date, Buy Price) and forms images of 4 month price charts for given 
+#   stocks. The price chart's last shown date is the 'buy date'. Images are formed for all inputted tickers. Returns (Classes) in this
+#   case are determined to be the returns 4 weeks into the future (after the buy date).
+
 for i in range(len(df2.Symbol.values)):
     buydate=df3.loc[df2.Symbol.values[i]]['TradeDate']
+    
+    #Determine start/end dates for price chart lookback period
+    
     start=buydate-datetime.timedelta(days=120)
     end=buydate+datetime.timedelta(days=28)
     
@@ -59,9 +70,8 @@ for i in range(len(df2.Symbol.values)):
     a=b
     a=a.set_index("date",inplace=False)
     
-    #Add return (for adding new col after)
-    
-    #buyprice=a.loc[pd.to_datetime(buydate)]['close'] #******* CLOSE BUY
+    #Below code if you wanted to buy on the close of the buydate as opposed to the actual set buy price
+    #buyprice=a.loc[pd.to_datetime(buydate)]['close'] 
     #fourWeekReturnStock = (b.iloc[b.shape[0]-1]['close']-buyprice)/buyprice
     
     #Actual Buy price
@@ -71,27 +81,6 @@ for i in range(len(df2.Symbol.values)):
     fourWeekReturns.append(fourWeekReturnStock)
     
     ##Standardize Patterns
-    
-    #Volume
-    #maxvol=b['volume'].max()
-    #minvol=b['volume'].min()
-    #rangevol=maxvol-minvol
-    
-    #Price
-    #maxp=b['high'].mean()
-    #minp=b['low'].min()
-    #rangep=maxp-minp
-    #b['open']=(b['open']-minp)/rangep
-    ##b['close']=(b['close']-minp)/rangep
-    #b['open']=(b['high']-minp)/rangep
-    #b['open']=(b['low']-minp)/rangep
-    
-    
-    #meanvol=statistics.mean(b['volume'].values)
-    #stdvol=statistics.stdev(b['volume'].values)
-    #b['volume']=(b['volume']-meanvol)/stdvol
-    #b['volume']=(b['volume']-minvol)/rangevol
-    
     
     closescale=[1]
     for i in range(1,b.shape[0]):
@@ -119,12 +108,12 @@ for i in range(len(df2.Symbol.values)):
     plt.xticks([])
     plt.yticks([])
     
-    '''
-    if fourWeekReturnStock>0.07:
+    #Multi-Class Case - Saving price charts as images to be used for training/testing
+    if fourWeekReturnStock>0.04:
         posIndices.append(i)
         lenposarr=len(posIndices)
         plt.savefig('data2/train/Positive/figure(%d).png' % lenposarr)
-    elif fourWeekReturnStock<-0.07:
+    elif fourWeekReturnStock<-0.04:
         negIndices.append(i)
         lennegarr=len(negIndices)
         plt.savefig('data2/train/Negative/figure(%d).png' % lennegarr)
@@ -132,7 +121,10 @@ for i in range(len(df2.Symbol.values)):
         neutralIndices.append(i)
         lenneutralarr=len(neutralIndices)
         plt.savefig('data2/train/Neutral/figure(%d).png' % lenneutralarr)
-     '''
+    
+    '''
+    Binary Case:
+    
     if fourWeekReturnStock>0.0:
         posIndices.append(i)
         lenposarr=len(posIndices)
@@ -141,8 +133,10 @@ for i in range(len(df2.Symbol.values)):
         negIndices.append(i)
         lennegarr=len(negIndices)
         plt.savefig('data2/train/Negative/figure(%d).png' % lennegarr)
-        
+    ''' 
 
+#Below is optimal CNN architecture, determined using hyperas package
+    
 from keras.layers import Dense, Dropout, Activation, BatchNormalization
 
 model=models.Sequential()
@@ -180,6 +174,8 @@ history = model.fit_generator(train_generator,
                               validation_data=validation_generator, 
                               validation_steps=20)
 
+#Graphs of validation loss / acc
+
 import matplotlib 
 import pylab as plt
 %matplotlib inline
@@ -204,6 +200,7 @@ plt.legend()
 
 plt.show()
 
+#Code for visualizing layer activations - Learned from Francois Chollet's book, Deep Learning w/Python  
 
 layer_outputs= [layer.output for layer in model.layers[:8]]
 activation_model= models.Model(inputs=model.input, outputs=layer_outputs)
@@ -251,7 +248,8 @@ for layer_name, layer_activation in zip(layer_names, activations):
     plt.imshow(display_grid, aspect='auto', cmap='viridis')
     plt.show()
 
-
+#Activation heat map for given testing image
+    
 neutral_output=model.output[:,1]
 last_conv_layer=model.get_layer('conv2d_23') #last conv layer
 
