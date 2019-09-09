@@ -2,103 +2,71 @@ import pandas as pd
 import datetime as dt
 import matplotlib.pyplot as plt
 from matplotlib import style
+from matplotlib.finance import candlestick_ohlc
+import matplotlib.dates as mdates
 import pandas as pd
 import pandas_datareader.data as web
-import plotly
-import plotly.plotly as py
-import plotly.graph_objs as go
+import statistics
+import datetime
+%matplotlib inline
 
-plotly.tools.set_credentials_file(username='jkenn4', api_key='0GSQOuD2n73387IE6vDL')
-
-
-#Trade data read in; Trade data includes: Ticker, Buy date, Buy Price   
-#Tickers used in training/testing were scanned for using online technical and fundamental scanners
-#Buy dates / Buy Prices manually determined
+'''
+*Trade data read in; Trade data includes: Ticker, Buy date, Buy Price   
+*Tickers used in training/testing were scanned for using online technical and fundamental scanners
+*Buy dates / Buy Prices manually determined
+*Shorts/Duplicate ticker orders dropped in excel 
+'''
 
 df = pd.read_csv('All trades.csv')
 
+df_buys=df.loc[df['Buy/Sell'] == 'BUY']
+df_buys['TradeDate'] = pd.to_datetime(df_buys['TradeDate'])
+df_buys.drop_duplicates(subset ="Symbol", keep = 'first', inplace = True) 
 
-#Drop non-unique tickers / Shorts
+#Determine start/end dates for price chart lookback period
+df_buys['start_date']=df_buys['TradeDate'].apply(lambda x: x-datetime.timedelta(days=120))
+df_buys['end_date']=df_buys['TradeDate'].apply(lambda x: x+datetime.timedelta(days=28))
 
-df=df.drop(df.index[[236,291,287,281,282,289,272,279,286,290,7,105,120,131,133,137,145,159,160,162,178,185,194,200,207,272,292,10,15,21,37,40,192 ]])
-
-
-df2=df.loc[df['Buy/Sell'] == "BUY"]
-df2['TradeDate'] = pd.to_datetime(df['TradeDate'])
-
-uniquelist=[]
-nonuniqueindex=[]
-
-for i in range(len(df2.Symbol.values)):
-    if df2.Symbol.values[i] in uniquelist:
-        nonuniqueindex.append(i)
-    if df2.Symbol.values[i] not in uniquelist:
-        uniquelist.append(df2.Symbol.values[i])
-
-df2=df2.drop(df2.index[nonuniqueindex])
-len(df2.index.values)
-
-import matplotlib.pyplot as plt
-from matplotlib.finance import candlestick_ohlc
-import matplotlib.dates as mdates
-import statistics
-import datetime
-
-df3=df2.set_index("Symbol",inplace=False)
-
-fourWeekReturns=[]
-neutralIndices=[]
-posIndices=[]
-negIndices=[]
-lenarr=0
+four_week_returns=[]
+neutral_indices=[]
+pos_indices=[]
+neg_indices=[]
 
 #Following for loop uses each trade (composed of Ticker, Buy Date, Buy Price) and forms images of 4 month price charts for given 
 #   stocks. The price chart's last shown date is the 'buy date'. Images are formed for all inputted tickers. Returns (Classes) in this
 #   case are determined to be the returns 4 weeks into the future (after the buy date).
 
-for i in range(len(df2.Symbol.values)):
-    buydate=df3.loc[df2.Symbol.values[i]]['TradeDate']
-    
-    #Determine start/end dates for price chart lookback period
-    
-    start=buydate-datetime.timedelta(days=120)
-    end=buydate+datetime.timedelta(days=28)
-    
-    b = web.DataReader(df2.Symbol.values[i], 'iex', start, end).reset_index()
-    b.date = pd.to_datetime(b.date)
-    
-    a=b
-    a=a.set_index("date",inplace=False)
+for row in df_buys.itertuples():
+    idx,symbol,buy_price, buy_date, start, end=row.Index,row.Symbol,row.Price, row.TradeDate,row.start_date, row.end_date   
+    symbol_price_data = web.DataReader(symbol, 'iex', start, end).reset_index()
+    symbol_price_data.date = pd.to_datetime(symbol_price_data.date)
     
     #Below code if you wanted to buy on the close of the buydate as opposed to the actual set buy price
-    #buyprice=a.loc[pd.to_datetime(buydate)]['close'] 
-    #fourWeekReturnStock = (b.iloc[b.shape[0]-1]['close']-buyprice)/buyprice
+    #buy_price=symbol_price_data.loc[pd.to_datetime(buy_date)]['close'] 
+    #four_week_return_stock = (symbol_price_data.iloc[-1]['close']-buy_price)/buy_price
     
     #Actual Buy price
-    buyprice=df2.iloc[i]['Price']
-    fourWeekReturnStock = (b.iloc[b.shape[0]-1]['close']-buyprice)/buyprice
-    
-    fourWeekReturns.append(fourWeekReturnStock)
+    four_week_return_stock = (symbol_price_data.iloc[-1]['close']-buy_price)/buy_price
+    four_week_returns.append(four_week_return_stock)
     
     ##Standardize Patterns
+    close_std=symbol_price_data[['close']]
+    close_std=close_std.apply(lambda x: x/x[0])
+    symbol_price_data['close_scaled']=close_std['close']
     
-    closescale=[1]
-    for i in range(1,b.shape[0]):
-        closescale.append(b.iloc[i]['close']/b.iloc[i-1]['close']-1+closescale[i-1])
+    #shorthand
+    spd=symbol_price_data.copy()
     
-    b['closescaled']=closescale
-    
-    b['open']=((b['open']-b['close'])/b['close'])*b['closescaled']+b['closescaled']
-    b['low']=((b['low']-b['close'])/b['close'])*b['closescaled']+b['closescaled']
-    b['high']=((b['high']-b['close'])/b['close'])*b['closescaled']+b['closescaled']
-    
+    spd['open']=((spd['open']-spd['close'])/spd['close'])*spd['close_scaled']+spd['close_scaled']
+    spd['low']=((spd['low']-spd['close'])/spd['close'])*spd['close_scaled']+spd['close_scaled']
+    spd['high']=((spd['high']-spd['close'])/spd['close'])*spd['close_scaled']+spd['close_scaled']
     
     #Prep for graph append
-    c=b.index[b['date'] == pd.to_datetime(buydate)].tolist()
-    b=b.iloc[0:c[0]+1]
+    graph_indices=spd.index[spd['date'] == buy_date].tolist()
+    spd=spd.iloc[0:graph_indices[0]+1]
     
-    df = b[['date', 'open', 'high', 'low', 'closescaled', 'volume']]
-    df["date"] = df["date"].apply(mdates.date2num)
+    spd_final = spd[['date', 'open', 'high', 'low', 'closescaled', 'volume']]
+    spd_final["date"] = spd_final["date"].apply(mdates.date2num)
     
     f1 = plt.subplot2grid((6, 4), (1, 0), rowspan=6, colspan=4, axisbg='#07000d')
     candlestick_ohlc(f1, df.values, width=.6, colorup='#53c156', colordown='#ff1717')
@@ -109,33 +77,33 @@ for i in range(len(df2.Symbol.values)):
     plt.yticks([])
     
     #Multi-Class Case - Saving price charts as images to be used for training/testing
-    if fourWeekReturnStock>0.04:
-        posIndices.append(i)
-        lenposarr=len(posIndices)
+    if four_week_return_stock>0.04:
+        pos_indices.append(i)
+        lenposarr=len(pos_indices)
         plt.savefig('data2/train/Positive/figure(%d).png' % lenposarr)
-    elif fourWeekReturnStock<-0.04:
-        negIndices.append(i)
-        lennegarr=len(negIndices)
+    elif four_week_return_stock<-0.04:
+        neg_indices.append(i)
+        lennegarr=len(neg_indices)
         plt.savefig('data2/train/Negative/figure(%d).png' % lennegarr)
     else:
-        neutralIndices.append(i)
-        lenneutralarr=len(neutralIndices)
+        neutral_indices.append(i)
+        lenneutralarr=len(neutral_indices)
         plt.savefig('data2/train/Neutral/figure(%d).png' % lenneutralarr)
     
     '''
     Binary Case:
     
-    if fourWeekReturnStock>0.0:
-        posIndices.append(i)
-        lenposarr=len(posIndices)
+    if four_week_return_stock>0.0:
+        pos_indices.append(i)
+        lenposarr=len(pos_indices)
         plt.savefig('data2/train/Positive/figure(%d).png' % lenposarr)
     else:
-        negIndices.append(i)
-        lennegarr=len(negIndices)
+        neg_indices.append(i)
+        lennegarr=len(neg_indices)
         plt.savefig('data2/train/Negative/figure(%d).png' % lennegarr)
     ''' 
 
-#Below is optimal CNN architecture, determined using hyperas package
+#Below is optimal CNN architecture, determined using hyperas package (*Separate script)
     
 from keras.layers import Dense, Dropout, Activation, BatchNormalization
 
@@ -176,9 +144,6 @@ history = model.fit_generator(train_generator,
 
 #Graphs of validation loss / acc
 
-import matplotlib 
-import pylab as plt
-%matplotlib inline
 acc=history.history['acc']
 val_acc=history.history['val_acc']
 loss=history.history['loss']
@@ -200,7 +165,7 @@ plt.legend()
 
 plt.show()
 
-#Code for visualizing layer activations - Learned from Francois Chollet's book, Deep Learning w/Python  
+#Code for visualizing layer activations - Based off work from Francois Chollet's book, Deep Learning w/Python  
 
 layer_outputs= [layer.output for layer in model.layers[:8]]
 activation_model= models.Model(inputs=model.input, outputs=layer_outputs)
